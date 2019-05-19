@@ -1,10 +1,10 @@
 import os
-from tempfile import TemporaryDirectory
 
 import psycopg2.extras
 import xlrd
 
 from datasource_common.dataset_importer import DatasetTemporaryTableImporter
+from datasource_common.dataset_provider import DatasetProvider
 from datasource_common.downloads import download_file
 from datasource_common.log import log
 
@@ -12,16 +12,9 @@ from datasource_common.log import log
 PROVINCES_FILE_URL = 'http://www.ine.es/daco/daco42/clasificaciones/codprov.xls'
 
 
-class ProvincesProvider:
-    def __enter__(self):
-        self._tmpdir = TemporaryDirectory()
-        return self
-
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        self._tmpdir.cleanup()
-
+class ProvincesProvider(DatasetProvider):
     def get_dataset(self):
-        provinces_file = os.path.join(self._tmpdir.name, 'codprov.xls')
+        provinces_file = os.path.join(self.tmpdir.name, 'codprov.xls')
         log.info('Downloading provinces file')
         download_file(PROVINCES_FILE_URL, provinces_file)
         return {'provinces_file': provinces_file}

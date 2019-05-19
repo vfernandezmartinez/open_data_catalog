@@ -1,11 +1,11 @@
 import re
 import os
-from tempfile import TemporaryDirectory
 from zipfile import ZipFile
 
 import xlrd
 
 from datasource_common.dataset_importer import DatasetTemporaryTableImporter
+from datasource_common.dataset_provider import DatasetProvider
 from datasource_common.downloads import download_file
 from datasource_common.log import log
 
@@ -14,14 +14,7 @@ INDICATORS_FILE_URL = 'http://www.ine.es/censos2011_datos/indicadores_seccen_rej
 CENSUS_DATA_URL = 'http://www.ine.es/censos2011_datos/indicadores_seccion_censal_csv.zip'
 
 
-class CensusProvider:
-    def __enter__(self):
-        self._tmpdir = TemporaryDirectory()
-        return self
-
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        self._tmpdir.cleanup()
-
+class CensusProvider(DatasetProvider):
     def get_dataset(self):
         indicators_file = self.download_indicators()
         census_zip_file = self.download_census_zip()
@@ -32,13 +25,13 @@ class CensusProvider:
         }
 
     def download_indicators(self):
-        description_file = os.path.join(self._tmpdir.name, 'indicators.xls')
+        description_file = os.path.join(self.tmpdir.name, 'indicators.xls')
         log.info('Downloading indicators file')
         download_file(INDICATORS_FILE_URL, description_file)
         return description_file
 
     def download_census_zip(self):
-        census_zip_file = os.path.join(self._tmpdir.name, 'census_csv.zip')
+        census_zip_file = os.path.join(self.tmpdir.name, 'census_csv.zip')
         log.info('Downloading census data')
         download_file(CENSUS_DATA_URL, census_zip_file)
         return census_zip_file
@@ -47,11 +40,11 @@ class CensusProvider:
         log.info('Extracting census data')
         with ZipFile(census_zip_file, 'r') as zip:
             csv_files = [
-                os.path.join(self._tmpdir.name, filename)
+                os.path.join(self.tmpdir.name, filename)
                 for filename in zip.namelist()
                 if filename.endswith('.csv')
             ]
-            zip.extractall(self._tmpdir.name)
+            zip.extractall(self.tmpdir.name)
 
         return csv_files
 

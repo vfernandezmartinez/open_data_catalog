@@ -30,8 +30,8 @@ Any tables and required PostgreSQL extensions are automatically created.
 
 ```
 WITH municipality AS (
-  SELECT substr(id_ine, 0, 3) AS cpro,
-         substr(id_ine, 3, 5) AS cmun
+  SELECT substr(id_ine, 1, 2) AS cpro,
+         substr(id_ine, 3, 3) AS cmun
   FROM municipalities_spain
   WHERE ST_Contains(wkb_geometry, ST_GeometryFromText('POINT(-0.59 39.63)', 4258))
     AND fecha_alta <= '2011-01-01'::date
@@ -44,9 +44,6 @@ WHERE cpro=ANY( (SELECT ARRAY(SELECT cpro FROM municipality LIMIT 1))::varchar[]
   AND cmun=ANY( (SELECT ARRAY(SELECT cmun FROM municipality LIMIT 1))::varchar[] )
   AND t12_5 IS NOT NULL;
 ```
-  Municipalities that are completely enclosed within others are still detected correctly with a single match only. For example, Domeño (39.66N 0.67W) which is completely surrounded by Llíria.
-
-  Queries for points in the Canary Islands also work, since both shapefiles are merged in the same table. For example, _POINT(-13.502 29.232)_ corresponds to the small town of Caleta de Sebo. Queries correctly detect that it belongs to the municipality of Teguise.
 
   * Listing of all the measures/indicators available in our database, with human-readable names
 ```
@@ -76,38 +73,58 @@ ORDER BY province;
 
 # Remarks
 
-## Table import strategy
+## Table import optimizations
+
+### Dropping tables to avoid dead rows
 
 Any data might be queried anytime, even while an import is in progress. Queries run during the import should still be able to see the old data. Once the import is complete, the new data should be visible to new queries immediately, avoiding any service disruptions or data inconsistencies. In order to achieve this, there are several approaches that could be taken.
 
 A first attempt might be to start a transaction, in which the table is first truncated and new rows are then inserted. However, this is not optimal because rows would not really be deleted from the table. Due to the MVCC model, while the import is in progress and the transaction hasn't been commited yet, PostgreSQL needs to be able to show these rows to other transactions. For that reason, PostgreSQL marks these rows as deleted for the import transaction but they are not really deleted until a VACUUM is executed (either manually or via autovacuum). As a result, space is wasted, since the table size on disk is bigger, which also has an impact on performance. Besides, depending on how often a VACUUM is performed and how often the import is run, a lot of disk might be used and the disk might even get full.
 
-When importing a whole large table, the most efficient approach is usually to drop the table and create a new one. This results in no dead rows and queries can be executed faster. PostgreSQL still needs to keep the rows while the import transaction is in progress, but as soon as it's commited, it gets rid of the table completely so it can delete all the previous data immediately.
+The most efficient approach for importing a whole large table is usually to drop the table and create a new one. This results in no dead rows and queries can be executed faster. PostgreSQL still needs to keep the old rows while the import transaction is in progress, but as soon as it's commited, it gets rid of the table completely so it can delete all the previous data immediately.
 
 The downside of this approach is that in order to be able to drop the table, any foreign keys from other tables that point to this table need to be cascaded as well. Hence, if we want to use foreign keys, they would need to be recreated and there could potentially be integrity issues (broken foreign keys). We don't need foreign keys for this challenge, so this downside doesn't impact the current solution.
 
-So far we're relying on being able to use a single transaction. However, this is unfortunately not possible. We're using ogr2ogr to import shapes. This tool has its own PostgreSQL connection. Therefore, it uses its own transaction. So it's not possible to drop the table and populate it at once unless ogr2ogr does all the job on its own. The safest approach in this case is to create a table with another temporary name. Once the import is complete, the original table can be dropped and the temporary table can be renamed to the final name within a single transaction. Renaming tables in PostgreSQL is very fast, as it only involves a change in metadata. No actual data needs to be moved on disk.
+### Avoiding unnecessary index updates
 
-The next thing to consider are indexes. Given our use case, where data is imported unfrequently and it is queried frequently, indexes can certainly help improve query performance. When a table has indexes, PostgreSQL needs to update them whenever a new row is inserted. This means if we first create indexes and then insert new rows, PostgreSQL has to do a lot of extra work to keep the indexes up to date. This work is a waste of time. It is more efficient to insert all rows first and then create the index only once the table has been populated. This way, PostgreSQL only needs to generate the index once.
+The next thing to consider are indexes. Given our use case, where data is imported unfrequently and it is queried frequently, indexes can certainly help improve query performance.
 
-The way to insert rows according to the SQL standard is INSERT. However, PostgreSQL also supports COPY, which is not part of the standard. COPY is faster because it allows PostgreSQL to receive and insert a lot of rows at once. Besides, COPY also supports importing from a CSV directly. Given that we receive the data in a CSV format, we can directly feed the CSV to PostgreSQL, making the insertion very fast.
+When a table has indexes, PostgreSQL needs to update them whenever a new row is inserted. This means if we first create indexes and then insert new rows, PostgreSQL has to do a lot of extra work to keep the indexes up to date. This work is a waste of time. It is more efficient to insert all rows first and then create the index only once the table has been populated. This way, PostgreSQL only needs to generate the index once.
+
+### Using COPY to increase import performance
+
+INSERT is the statement defined by the SQL standard to add new rows to a table. However, PostgreSQL also supports COPY, which is not part of the standard. COPY is faster because it allows PostgreSQL to receive and insert a lot of rows at once. Besides, COPY also supports importing from CSV directly. Given that we receive the data in a CSV format, we can directly feed the CSV to PostgreSQL, making the insertion very fast.
 
 
-## Concurrency
+## Concurrent imports
 
-For simplicity, the code does not actively prevent two imports from being executed at the same time in parallel. It is assumed that whatever job scheduler is used will prevent the same import from running in parallel.
+For simplicity, the code does not actively prevent two imports from being executed at the same time in parallel (e.g. by running the script from two terminal windows). It is assumed that whatever job scheduler is used will prevent the same import from running in parallel.
 
 If needed, preventing concurrent imports could be made for example by using PostgreSQL advisory locks. When the import script starts, it would try to acquire an advisory lock using pg_try_advisory_lock(). If the lock is acquired successfully, the import could proceed. If the lock failed, it means the lock is currently held by another running import process. Hence, the code could just fail with an error message. The lock held by the running import proccess would automatically be released by PostgreSQL once its connection is closed.
+
+## Importing shapefiles
+
+Municipality geometry data is provided in two separate shapefiles: one for the Iberian peninsula and another one for the Canary Islands. In order to be able to run queries to find the municipality that contains a point, we need a way to merge these two.
+
+It is possible to import these 2 shapefiles separately and create a PostgreSQL view. However, this is less efficient than having a single table.
+
+The approach used here was to merge both shapefiles in advance using ogr2ogr. The resulting shapefile is then imported, thus resulting in a single table in the database.
 
 ## Query optimizations
 
 ### Percentage of people with university degrees
 
+Municipalities that are completely enclosed within others are still detected correctly with a single match only. For example, Domeño (39.66N 0.67W) which is completely surrounded by Llíria.
+
+Queries for points in the Canary Islands also work, since both shapefiles are merged in the same table. For example, _POINT(-13.502 29.232)_ corresponds to the small town of Caleta de Sebo. Queries correctly detect that it belongs to the municipality of Teguise.
+
+Some rows in the census data contain NULL values for column t12_5. This also happens in other columns except t1_1. Given that data is unavailable for those districts/sections, such rows cannot be used for computing the percentage, as the results would be otherwise incorrect. This is the reason why the query includes `AND 12_5 IS NOT NULL`.
+
 Initially, I wrote this query:
 ```
 WITH municipality AS (
-  SELECT substr(id_ine, 0, 3) AS cpro,
-         substr(id_ine, 3, 5) AS cmun
+  SELECT substr(id_ine, 1, 2) AS cpro,
+         substr(id_ine, 3, 3) AS cmun
   FROM municipalities_spain
   WHERE ST_Contains(wkb_geometry, ST_GeometryFromText('POINT(-0.55 39.65)', 4258))
     AND fecha_alta <= '2011-01-01'::date
