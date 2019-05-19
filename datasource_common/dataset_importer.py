@@ -1,19 +1,43 @@
 from .log import log
 
 
-class DatasetImportTask:
-    TABLE_NAME = None
-    DOWNLOADER_CLASS = None
+class DatasetImporter:
+    dataset_provider_class = None
 
     def __init__(self, connection_string, connection):
         self.connection_string = connection_string
         self.connection = connection
         self.cur = None
-        self.downloads = None
+        self.dataset = None
 
-    @property
-    def table_name(self):
-        return self.TABLE_NAME
+    def setup(self):
+        pass
+
+    def run(self):
+        log.info('---- %s ----', self.__class__.__name__)
+        with self.dataset_provider_class() as provider:
+            self.dataset = provider.get_dataset()
+            self.import_dataset()
+        log.info('------------')
+
+    def import_dataset(self):
+        try:
+            self.cur = self.connection.cursor()
+            self.setup()
+            self.populate_table()
+        except:
+            self.connection.rollback()
+            raise
+        finally:
+            self.cur.close()
+            self.cur = None
+
+    def populate_table(self):
+        raise NotImplemented
+
+
+class DatasetTemporaryTableImporter(DatasetImporter):
+    table_name = None
 
     @property
     def temporary_table_name(self):
@@ -24,9 +48,6 @@ class DatasetImportTask:
 
     def create_temporary_table(self):
         pass
-
-    def populate_table(self):
-        raise NotImplemented
 
     def drop_original_table(self):
         self.cur.execute(f'DROP TABLE IF EXISTS {self.table_name} CASCADE;')
@@ -40,9 +61,10 @@ class DatasetImportTask:
     def rename_to_target_table(self):
         self.cur.execute(f'ALTER TABLE {self.temporary_table_name} RENAME TO {self.table_name};')
 
-    def import_data(self):
+    def import_dataset(self):
         try:
             self.cur = self.connection.cursor()
+            self.setup()
             self.drop_temporary_table()
             self.create_temporary_table()
             self.populate_table()
@@ -59,9 +81,3 @@ class DatasetImportTask:
         finally:
             self.cur.close()
             self.cur = None
-
-    def run(self):
-        log.info('---- %s ----', self.__class__.__name__)
-        with self.DOWNLOADER_CLASS() as downloader:
-            self.downloads = downloader.download()
-            self.import_data()

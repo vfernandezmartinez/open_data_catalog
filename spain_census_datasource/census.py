@@ -5,16 +5,16 @@ from zipfile import ZipFile
 
 import xlrd
 
-from datasource_common.dataset_import_task import DatasetImportTask
+from datasource_common.dataset_importer import DatasetTemporaryTableImporter
 from datasource_common.downloads import download_file
 from datasource_common.log import log
 
 
-DESCRIPTION_FILE_URL = 'http://www.ine.es/censos2011_datos/indicadores_seccen_rejilla.xls'
+INDICATORS_FILE_URL = 'http://www.ine.es/censos2011_datos/indicadores_seccen_rejilla.xls'
 CENSUS_DATA_URL = 'http://www.ine.es/censos2011_datos/indicadores_seccion_censal_csv.zip'
 
 
-class CensusDownloader:
+class CensusProvider:
     def __enter__(self):
         self._tmpdir = TemporaryDirectory()
         return self
@@ -22,15 +22,28 @@ class CensusDownloader:
     def __exit__(self, exc_type, exc_val, exc_tb):
         self._tmpdir.cleanup()
 
-    def download(self):
+    def get_dataset(self):
+        indicators_file = self.download_indicators()
+        census_zip_file = self.download_census_zip()
+        census_csv_files = self.extract_census_csv_files(census_zip_file)
+        return {
+            'indicators_file': indicators_file,
+            'census_csv_files': census_csv_files,
+        }
+
+    def download_indicators(self):
         description_file = os.path.join(self._tmpdir.name, 'indicators.xls')
         log.info('Downloading indicators file')
-        download_file(DESCRIPTION_FILE_URL, description_file)
+        download_file(INDICATORS_FILE_URL, description_file)
+        return description_file
 
+    def download_census_zip(self):
         census_zip_file = os.path.join(self._tmpdir.name, 'census_csv.zip')
         log.info('Downloading census data')
         download_file(CENSUS_DATA_URL, census_zip_file)
+        return census_zip_file
 
+    def extract_census_csv_files(self, census_zip_file):
         log.info('Extracting census data')
         with ZipFile(census_zip_file, 'r') as zip:
             csv_files = [
@@ -40,47 +53,44 @@ class CensusDownloader:
             ]
             zip.extractall(self._tmpdir.name)
 
-        return {
-            'description_file': description_file,
-            'csv_files': csv_files,
-        }
+        return csv_files
 
 
-class CensusImporter(DatasetImportTask):
-    TABLE_NAME = 'census_spain'
-    DOWNLOADER_CLASS = CensusDownloader
+class CensusImporter(DatasetTemporaryTableImporter):
+    table_name = 'census_spain'
+    dataset_provider_class = CensusProvider
 
     def create_temporary_table(self):
-            indicators = self._get_indicators()
+        indicators = self._get_indicators()
 
-            table_fields = [
-                ('ccaa', 'CHAR(2) NOT NULL'),
-                ('cpro', 'CHAR(2) NOT NULL'),
-                ('cmun', 'CHAR(3) NOT NULL'),
-                ('dist', 'CHAR(2) NOT NULL'),
-                ('secc', 'CHAR(3) NOT NULL'),
-            ]
-            table_fields.extend([
-                (indicator_code, 'BIGINT',)
-                for indicator_code, _ in indicators
-            ])
+        table_fields = [
+            ('ccaa', 'CHAR(2) NOT NULL'),
+            ('cpro', 'CHAR(2) NOT NULL'),
+            ('cmun', 'CHAR(3) NOT NULL'),
+            ('dist', 'CHAR(2) NOT NULL'),
+            ('secc', 'CHAR(3) NOT NULL'),
+        ]
+        table_fields.extend([
+            (indicator_code, 'BIGINT',)
+            for indicator_code, _ in indicators
+        ])
 
-            field_sql = ',\n'.join([
-                f'{field_name} {field_type}'
-                for field_name, field_type in table_fields
-            ])
-            log.info('Creating census table')
+        field_sql = ',\n'.join([
+            f'{field_name} {field_type}'
+            for field_name, field_type in table_fields
+        ])
+        log.info('Creating census table')
+        self.cur.execute(
+            f'CREATE TABLE {self.temporary_table_name} ({field_sql});'
+        )
+        for indicator_code, indicator_label in indicators:
             self.cur.execute(
-                f'CREATE TABLE {self.temporary_table_name} ({field_sql});'
+                f'COMMENT ON COLUMN {self.temporary_table_name}.{indicator_code} IS %s;',
+                (indicator_label,)
             )
-            for indicator_code, indicator_label in indicators:
-                self.cur.execute(
-                    f'COMMENT ON COLUMN {self.temporary_table_name}.{indicator_code} IS %s;',
-                    (indicator_label,)
-                )
 
     def _get_indicators(self):
-        book = xlrd.open_workbook(self.downloads['description_file'])
+        book = xlrd.open_workbook(self.dataset['indicators_file'])
         indicator_rx = re.compile(r't\d+_\d+')
         indicators = []
 
@@ -95,14 +105,11 @@ class CensusImporter(DatasetImportTask):
         return indicators
 
     def populate_table(self):
-        for csv_file in self.downloads['csv_files']:
+        for csv_file in self.dataset['census_csv_files']:
             log.info('Importing data from: %s', os.path.basename(csv_file))
-            self._import_census_csv(csv_file)
-
-    def _import_census_csv(self, filepath):
-        with open(filepath, 'rb') as f:
-            f.readline()  # skip the header
-            self.cur.copy_from(f, self.temporary_table_name, sep=',', null='')
+            with open(csv_file, 'rb') as f:
+                f.readline()  # skip the header
+                self.cur.copy_from(f, self.temporary_table_name, sep=',', null='')
 
     def create_indexes(self):
         log.info('Creating census table indexes')

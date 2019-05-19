@@ -74,7 +74,7 @@ ORDER BY province;
 
 
 
-# Considerations
+# Remarks
 
 ## Table import strategy
 
@@ -125,22 +125,22 @@ However, it had bad performance, as the query planner was using a sequential sca
 ```
                                                                                       QUERY PLAN                                                                                      
 --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- Aggregate  (cost=5210.27..5210.28 rows=1 width=32) (actual time=43.414..43.415 rows=1 loops=1)
+ Aggregate  (cost=5210.27..5210.29 rows=1 width=32) (actual time=103.938..103.938 rows=1 loops=1)
    CTE municipality
-     ->  Limit  (cost=0.15..12.88 rows=1 width=64) (actual time=0.107..0.108 rows=1 loops=1)
-           ->  Index Scan using municipalities_spain_wkb_geometry_geom_idx on municipalities_spain  (cost=0.15..38.33 rows=3 width=64) (actual time=0.107..0.107 rows=1 loops=1)
+     ->  Limit  (cost=0.15..12.88 rows=1 width=64) (actual time=0.300..0.302 rows=1 loops=1)
+           ->  Index Scan using municipalities_spain_wkb_geometry_geom_idx on municipalities_spain  (cost=0.15..38.34 rows=3 width=64) (actual time=0.298..0.299 rows=1 loops=1)
                  Index Cond: (wkb_geometry ~ '0101000020A21000009A9999999999E1BF3333333333D34340'::geometry)
-                 Filter: (((fecha_baja IS NULL) OR (fecha_baja > '2011-01-01'::date)) AND _st_contains(wkb_geometry, '0101000020A21000009A9999999999E1BF3333333333D34340'::geometry))
+                 Filter: ((fecha_alta <= '2011-01-01'::date) AND ((fecha_baja IS NULL) OR (fecha_baja > '2011-01-01'::date)) AND _st_contains(wkb_geometry, '0101000020A21000009A9999999999E1BF3333333333D34340'::geometry))
                  Rows Removed by Filter: 2
    InitPlan 2 (returns $1)
-     ->  CTE Scan on municipality  (cost=0.00..0.02 rows=1 width=32) (actual time=0.109..0.110 rows=1 loops=1)
+     ->  CTE Scan on municipality  (cost=0.00..0.02 rows=1 width=32) (actual time=0.306..0.308 rows=1 loops=1)
    InitPlan 3 (returns $2)
-     ->  CTE Scan on municipality municipality_1  (cost=0.00..0.02 rows=1 width=32) (actual time=0.002..0.002 rows=1 loops=1)
-   ->  Seq Scan on census_spain  (cost=0.00..5197.34 rows=1 width=16) (actual time=29.075..43.396 rows=15 loops=1)
+     ->  CTE Scan on municipality municipality_1  (cost=0.00..0.02 rows=1 width=32) (actual time=0.004..0.005 rows=1 loops=1)
+   ->  Seq Scan on census_spain  (cost=0.00..5197.34 rows=1 width=16) (actual time=70.204..103.904 rows=15 loops=1)
          Filter: ((t12_5 IS NOT NULL) AND ((cpro)::text = $1) AND ((cmun)::text = $2))
          Rows Removed by Filter: 35902
- Planning time: 0.320 ms
- Execution time: 43.515 ms
+ Planning time: 0.911 ms
+ Execution time: 104.198 ms
 (16 rows)
 ```
 
@@ -158,32 +158,30 @@ This is less readable but leads to a better query plan:
 ```
                                                                                      QUERY PLAN
 --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- Aggregate  (cost=792.63..792.65 rows=1 width=32) (actual time=0.544..0.544 rows=1 loops=1)
+ Aggregate  (cost=792.65..792.66 rows=1 width=32) (actual time=0.184..0.184 rows=1 loops=1)
    CTE municipality
-     ->  Limit  (cost=0.15..12.88 rows=1 width=64) (actual time=0.352..0.353 rows=1 loops=1)
-           ->  Index Scan using municipalities_spain_wkb_geometry_geom_idx on municipalities_spain  (cost=0.15..38.33 rows=3 width=64) (actual time=0.351..0.352 rows=1 lo
-ops=1)
-                 Index Cond: (wkb_geometry ~ '0101000020A21000009A9999999999E1BF3333333333D34340'::geometry)
-                 Filter: (((fecha_baja IS NULL) OR (fecha_baja > '2011-01-01'::date)) AND _st_contains(wkb_geometry, '0101000020A21000009A9999999999E1BF3333333333D34340'::geometry))
-                 Rows Removed by Filter: 2
+     ->  Limit  (cost=0.15..12.88 rows=1 width=64) (actual time=0.116..0.116 rows=1 loops=1)
+           ->  Index Scan using municipalities_spain_wkb_geometry_geom_idx on municipalities_spain  (cost=0.15..38.34 rows=3 width=64) (actual time=0.116..0.116 rows=1 loops=1)
+                 Index Cond: (wkb_geometry ~ '0101000020A2100000E17A14AE47E1E2BF713D0AD7A3D04340'::geometry)
+                 Filter: ((fecha_alta <= '2011-01-01'::date) AND ((fecha_baja IS NULL) OR (fecha_baja > '2011-01-01'::date)) AND _st_contains(wkb_geometry, '0101000020A2100000E17A14AE47E1E2BF713D0AD7A3D04340'::geometry))
    InitPlan 3 (returns $2)
-     ->  Result  (cost=0.02..0.03 rows=1 width=32) (actual time=0.373..0.374 rows=1 loops=1)
+     ->  Result  (cost=0.02..0.03 rows=1 width=32) (actual time=0.124..0.124 rows=1 loops=1)
            InitPlan 2 (returns $1)
-             ->  Limit  (cost=0.00..0.02 rows=1 width=32) (actual time=0.361..0.363 rows=1 loops=1)
-                   ->  CTE Scan on municipality  (cost=0.00..0.02 rows=1 width=32) (actual time=0.359..0.360 rows=1 loops=1)
+             ->  Limit  (cost=0.00..0.02 rows=1 width=32) (actual time=0.119..0.120 rows=1 loops=1)
+                   ->  CTE Scan on municipality  (cost=0.00..0.02 rows=1 width=32) (actual time=0.118..0.119 rows=1 loops=1)
    InitPlan 5 (returns $4)
-     ->  Result  (cost=0.02..0.03 rows=1 width=32) (actual time=0.010..0.011 rows=1 loops=1)
+     ->  Result  (cost=0.02..0.03 rows=1 width=32) (actual time=0.003..0.003 rows=1 loops=1)
            InitPlan 4 (returns $3)
-             ->  Limit  (cost=0.00..0.02 rows=1 width=32) (actual time=0.003..0.004 rows=1 loops=1)
-                   ->  CTE Scan on municipality municipality_1  (cost=0.00..0.02 rows=1 width=32) (actual time=0.002..0.002 rows=1 loops=1)
-   ->  Bitmap Heap Scan on census_spain  (cost=298.03..779.02 rows=135 width=16) (actual time=0.471..0.509 rows=15 loops=1)
+             ->  Limit  (cost=0.00..0.02 rows=1 width=32) (actual time=0.001..0.001 rows=1 loops=1)
+                   ->  CTE Scan on municipality municipality_1  (cost=0.00..0.02 rows=1 width=32) (actual time=0.001..0.001 rows=1 loops=1)
+   ->  Bitmap Heap Scan on census_spain  (cost=298.03..779.02 rows=136 width=16) (actual time=0.156..0.171 rows=15 loops=1)
          Recheck Cond: ((cpro = ANY ((($2)::character varying[])::bpchar[])) AND (cmun = ANY ((($4)::character varying[])::bpchar[])))
          Filter: (t12_5 IS NOT NULL)
          Heap Blocks: exact=2
-         ->  Bitmap Index Scan on province_municipality_idx  (cost=0.00..298.00 rows=139 width=0) (actual time=0.456..0.456 rows=15 loops=1)
+         ->  Bitmap Index Scan on province_municipality_idx  (cost=0.00..298.00 rows=139 width=0) (actual time=0.151..0.151 rows=15 loops=1)
                Index Cond: ((cpro = ANY ((($2)::character varying[])::bpchar[])) AND (cmun = ANY ((($4)::character varying[])::bpchar[])))
- Planning time: 1.166 ms
- Execution time: 0.895 ms
+ Planning time: 0.679 ms
+ Execution time: 0.306 ms
 (25 rows)
 ```
 
@@ -197,7 +195,8 @@ SELECT provinces_spain.cpro, province, SUM(t1_1) AS population
 FROM provinces_spain
   JOIN census_spain
   ON provinces_spain.cpro=census_spain.cpro
-GROUP BY provinces_spain.cpro;
+GROUP BY provinces_spain.cpro
+ORDER BY province;
 ```
 This does a JOIN on census_spain and provinces_spain tables. However, this means PostgreSQL would first join both tables and then compute the aggregation.
 
