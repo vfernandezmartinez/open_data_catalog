@@ -50,30 +50,15 @@ class CensusImporter(DatasetImportTask):
     TABLE_NAME = 'census_spain'
     DOWNLOADER_CLASS = CensusDownloader
 
-    def _get_indicators(self):
-        book = xlrd.open_workbook(self.downloads['description_file'])
-        indicator_rx = re.compile('t\d+_\d+')
-        indicators = []
-
-        for sheet in book.sheets():
-            for row_index in range(1, sheet.nrows):
-                indicator_code = sheet.cell_value(rowx=row_index, colx=0)
-                if indicator_rx.fullmatch(indicator_code):
-                    indicator_label = sheet.cell_value(rowx=row_index, colx=1)
-                    indicator = indicator_code, indicator_label,
-                    indicators.append(indicator)
-
-        return indicators
-
     def create_temporary_table(self):
             indicators = self._get_indicators()
 
             table_fields = [
-                ('ccaa', 'CHAR(2)'),
-                ('cpro', 'CHAR(2)'),
-                ('cmun', 'CHAR(3)'),
-                ('dist', 'CHAR(2)'),
-                ('secc', 'CHAR(3)'),
+                ('ccaa', 'CHAR(2) NOT NULL'),
+                ('cpro', 'CHAR(2) NOT NULL'),
+                ('cmun', 'CHAR(3) NOT NULL'),
+                ('dist', 'CHAR(2) NOT NULL'),
+                ('secc', 'CHAR(3) NOT NULL'),
             ]
             table_fields.extend([
                 (indicator_code, 'BIGINT',)
@@ -81,7 +66,7 @@ class CensusImporter(DatasetImportTask):
             ])
 
             field_sql = ',\n'.join([
-                f'  {field_name} {field_type}'
+                f'{field_name} {field_type}'
                 for field_name, field_type in table_fields
             ])
             log.info('Creating census table')
@@ -94,15 +79,30 @@ class CensusImporter(DatasetImportTask):
                     (indicator_label,)
                 )
 
-    def _import_census_csv(self, filepath):
-        with open(filepath, 'rb') as f:
-            f.readline()  # skip the header
-            self.cur.copy_from(f, self.temporary_table_name, sep=',', null='')
+    def _get_indicators(self):
+        book = xlrd.open_workbook(self.downloads['description_file'])
+        indicator_rx = re.compile(r't\d+_\d+')
+        indicators = []
+
+        for sheet in book.sheets():
+            for row in sheet.get_rows():
+                indicator_code = row[0].value
+                if indicator_rx.fullmatch(indicator_code):
+                    indicator_label = row[1].value
+                    indicator = indicator_code, indicator_label,
+                    indicators.append(indicator)
+
+        return indicators
 
     def populate_table(self):
         for csv_file in self.downloads['csv_files']:
             log.info('Importing data from: %s', os.path.basename(csv_file))
             self._import_census_csv(csv_file)
+
+    def _import_census_csv(self, filepath):
+        with open(filepath, 'rb') as f:
+            f.readline()  # skip the header
+            self.cur.copy_from(f, self.temporary_table_name, sep=',', null='')
 
     def create_indexes(self):
         log.info('Creating census table indexes')

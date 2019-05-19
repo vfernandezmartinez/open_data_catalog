@@ -1,10 +1,12 @@
 from .census import CensusImporter
 from .municipalities import MunicipalityGeometryImporter
+from .provinces import ProvincesImporter
 
 
 IMPORTER_CLASSES = (
     CensusImporter,
     MunicipalityGeometryImporter,
+    ProvincesImporter,
 )
 
 

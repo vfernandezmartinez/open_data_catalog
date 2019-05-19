@@ -26,14 +26,14 @@ Any tables and required PostgreSQL extensions are automatically created.
 
   * Percentage of people with university degrees (third-level studies) in a location, given by a point (latitude and longitude).
 
-    For this example, the point used was latitude 39.65N and longitude 0.55W, which corresponds to Llíria (Valencia). In the query, the point appears as _POINT(-0.55 39.65)_
+    For this example, the point used was latitude 39.63N and longitude 0.59W, which corresponds to Llíria (Valencia). In the query, the point appears as _POINT(-0.59 39.63)_
 
 ```
 WITH municipality AS (
   SELECT substr(id_ine, 0, 3) AS cpro,
          substr(id_ine, 3, 5) AS cmun
   FROM municipalities_spain
-  WHERE ST_Contains(wkb_geometry, ST_GeometryFromText('POINT(-0.55 39.65)', 4258))
+  WHERE ST_Contains(wkb_geometry, ST_GeometryFromText('POINT(-0.59 39.63)', 4258))
     AND fecha_alta <= '2011-01-01'::date
     AND (fecha_baja IS NULL OR fecha_baja > '2011-01-01'::date)
   LIMIT 1
@@ -44,16 +44,35 @@ WHERE cpro=ANY( (SELECT ARRAY(SELECT cpro FROM municipality LIMIT 1))::varchar[]
   AND cmun=ANY( (SELECT ARRAY(SELECT cmun FROM municipality LIMIT 1))::varchar[] )
   AND t12_5 IS NOT NULL;
 ```
+  Municipalities that are completely enclosed within others are still detected correctly with a single match only. For example, Domeño (39.66N 0.67W) which is completely surrounded by Llíria.
+
+  Queries for points in the Canary Islands also work, since both shapefiles are merged in the same table. For example, _POINT(-13.502 29.232)_ corresponds to the small town of Caleta de Sebo. Queries correctly detect that it belongs to the municipality of Teguise.
 
   * Listing of all the measures/indicators available in our database, with human-readable names
 ```
-    SELECT table_name,
-           column_name as indicator_code,
-           col_description((table_schema||'.'||table_name)::regclass::oid, ordinal_position) as indicator_label
-    FROM information_schema.columns
-    WHERE col_description((table_schema||'.'||table_name)::regclass::oid, ordinal_position) IS NOT NULL
-    ORDER BY table_name, ordinal_position;
+SELECT table_name,
+       column_name as indicator_code,
+       col_description((table_schema||'.'||table_name)::regclass::oid, ordinal_position) as indicator_label
+FROM information_schema.columns
+WHERE col_description((table_schema||'.'||table_name)::regclass::oid, ordinal_position) IS NOT NULL
+ORDER BY table_name, ordinal_position;
 ```
+
+  * List provinces with their population.
+
+```
+SELECT province_population.cpro, province, population
+FROM provinces_spain
+  JOIN (
+    SELECT cpro, SUM(t1_1) AS population
+    FROM census_spain
+    GROUP BY cpro
+  ) AS province_population
+  ON provinces_spain.cpro=province_population.cpro
+ORDER BY province;
+```
+
+
 
 # Considerations
 
@@ -81,6 +100,8 @@ For simplicity, the code does not actively prevent two imports from being execut
 If needed, preventing concurrent imports could be made for example by using PostgreSQL advisory locks. When the import script starts, it would try to acquire an advisory lock using pg_try_advisory_lock(). If the lock is acquired successfully, the import could proceed. If the lock failed, it means the lock is currently held by another running import process. Hence, the code could just fail with an error message. The lock held by the running import proccess would automatically be released by PostgreSQL once its connection is closed.
 
 ## Query optimizations
+
+### Percentage of people with university degrees
 
 Initially, I wrote this query:
 ```
@@ -167,6 +188,20 @@ ops=1)
 ```
 
 Now PostgreSQL is using the index, doing a bitmap index scan. This means PostgreSQL uses the index to decide which pages it needs to fetch from disk. Therefore, it doesn't need to fetch the whole table, only the pages corresponding to the rows that match the filter. You can also see the much smaller execution time.
+
+### List of provinces with their population
+
+A simple approach could be:
+```
+SELECT provinces_spain.cpro, province, SUM(t1_1) AS population
+FROM provinces_spain
+  JOIN census_spain
+  ON provinces_spain.cpro=census_spain.cpro
+GROUP BY provinces_spain.cpro;
+```
+This does a JOIN on census_spain and provinces_spain tables. However, this means PostgreSQL would first join both tables and then compute the aggregation.
+
+It is possible to slightly reduce the amount of work PostgreSQL needs to do by letting it compute the aggregation on census_spain first, then join the aggregated data with provinces_spain. PostgreSQL will still need to scan the whole census_spain table, which is what takes most of the time. This means the execution time cannot be much lower with the second approach. However, in my tests the first approach usually takes 70-110ms, whereas the second approach takes 40-70ms so there is some obvious benefit on computing the aggregation first. For that reason, the proposed query uses the second approach.
 
 # Error handling
 
