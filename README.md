@@ -222,3 +222,7 @@ It is possible to slightly reduce the amount of work PostgreSQL needs to do by l
 # Error handling
 
 For simplicity, most of the time, errors are not handled. For example, if a file download fails, the application will abort with an uncatched exception. The backtrace will be printed by python. However, everything is cleaned up. Temporary directories are deleted, temporary tables are dropped, transactions are rolled back, etc.
+
+# Additional notes
+
+ * This assumes the default transaction isolation level (Read Committed) is used.
